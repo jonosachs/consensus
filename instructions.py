@@ -3,7 +3,7 @@ This is a group chat with multiple llm's. Our msg history will be recorded here.
 
 For all communications respond with the following json schema: 
 {
-    name: str (model, e.g. claude),
+    name: str (model, e.g. Claude),
     text: str (your response), 
     done: bool (if you've finished your response')
 }

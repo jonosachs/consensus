@@ -15,32 +15,42 @@ def init():
 
 
 def callLlm(model_config: dict, prompt: str):
+    model_name = model_config["name"]
     model_args = model_config["args"] + [prompt]
     run_settings = {"capture_output": True, "text": True}
 
-    response = subprocess.run(model_args, **run_settings, timeout=30)
-    output = response.stdout or response.stderr
+    try:
+        response = subprocess.run(model_args, **run_settings, timeout=30)
+        output = response.stdout or response.stderr
+    except subprocess.TimeoutExpired as e:
+        output = build_response(model_name, "Timed out.")
 
     try:
-        normd = normaliseResp(output)
-        output_json = json.loads(normd)
-        return output_json
-
+        normal = normalise_resp(model_name, output)
+        if isinstance(normal, str):
+            return json.loads(normal)
+        return normal
     except JSONDecodeError as e:
-        print(f"Malformed response: {output} {e}")
-        raise JSONDecodeError(f"Error {e}", "", 0)
+        return build_response(model_name, "JSON error.")
 
 
 def update_history(response):
     model, text, done = deconstruct(response)
-    history.append(
-        {"assistant": {"name": model, "text": f"[{model}] {text}", "done": done}}
-    )
+    structured = build_response(model, text, done)
+    history.append({"assistant": structured})
 
 
-def normaliseResp(response):
-    normd = response.replace("```", "").replace("json", "")
-    return normd
+def build_response(model, text, done=True):
+    return {"name": model, "text": text, "done": done}
+
+
+def normalise_resp(model, response):
+    normalised = response.replace("```", "").replace("json", "")
+
+    if "name" not in response and "text" not in response:
+        normalised = build_response(model, response)
+
+    return normalised
 
 
 def runQuery(prompt):
@@ -56,9 +66,12 @@ def runQuery(prompt):
                     model_config[model], prompt=json.dumps(history, indent=4)
                 )
                 update_history(response)
+
                 if history[-1]["assistant"]["done"]:
                     finished[model] = True
-                print(history[-1]["assistant"]["text"])
+                last_msg = history[-1]["assistant"]["text"]
+                model = history[-1]["assistant"]["name"]
+                print(f"[{model}] {last_msg}")
                 linebreak()
 
 
