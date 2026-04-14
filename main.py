@@ -8,30 +8,31 @@ import json
 import os
 
 history = []
+console = Console()
 
 
-def init():
-    pass
+def run_subprocess(args, timeout=30):
+    response = subprocess.run(
+        args, capture_output=True, text=True, check=True, timeout=timeout
+    )
+    return response.stdout
 
 
 def callLlm(model_config: dict, prompt: str):
     model_name = model_config["name"]
     model_args = model_config["args"] + [prompt]
-    run_settings = {"capture_output": True, "text": True}
 
     try:
-        response = subprocess.run(model_args, **run_settings, timeout=30)
-        output = response.stdout or response.stderr
-    except subprocess.TimeoutExpired as e:
-        output = build_response(model_name, "Timed out.")
+        with console.status("[bold green]Thinking...[/bold green]\n", spinner="dots"):
+            response = run_subprocess(model_args)
 
-    try:
-        normal = normalise_resp(model_name, output)
-        if isinstance(normal, str):
-            return json.loads(normal)
+        normal = normalise_resp(model_name, response)
         return normal
-    except JSONDecodeError as e:
-        return build_response(model_name, "JSON error.")
+    except OSError as e:
+        print(f"Error: {e}")
+        return build_response(model_name, str(e))
+    except subprocess.TimeoutExpired as e:
+        return build_response(model_name, "Timed out.")
 
 
 def update_history(response):
@@ -44,13 +45,31 @@ def build_response(model, text, done=True):
     return {"name": model, "text": text, "done": done}
 
 
-def normalise_resp(model, response):
-    normalised = response.replace("```", "").replace("json", "")
+def normalise_resp(model, response=str | dict) -> dict:
+    # String with markdown
+    if isinstance(response, str) and "```" in response:
+        response = response.replace("```", "").replace("json", "").strip()
 
-    if "name" not in response and "text" not in response:
-        normalised = build_response(model, response)
+    # Still string (may be plain text)
+    if isinstance(response, str):
+        try:
+            return json.loads(response)
+        except JSONDecodeError as e:
+            print(f"Malformed json: {str(response)}")
+            return build_response(model, f"JSON error: {str(e)}")
 
-    return normalised
+    # Attempt to find text response if not in "text" field, fall back to response
+    if isinstance(response, dict):
+        text = (
+            response["text"]
+            or response["message"]
+            or response["result"]
+            or response["content"]
+            or str(response)
+        )
+        return build_response(model, text)
+
+    return response
 
 
 def runQuery(prompt):
@@ -69,10 +88,9 @@ def runQuery(prompt):
 
                 if history[-1]["assistant"]["done"]:
                     finished[model] = True
+
                 last_msg = history[-1]["assistant"]["text"]
-                model = history[-1]["assistant"]["name"]
-                print(f"[{model}] {last_msg}")
-                linebreak()
+                print(f"[{model}] {last_msg}\n")
 
 
 def deconstruct(response):
@@ -93,7 +111,6 @@ def linebreak():
 
 def run():
     now = datetime.now().astimezone().isoformat()
-    console = Console()
     userin = ""
     history.append({"Datetime": now})
     history.append({"Instructions": instructions})
@@ -104,12 +121,9 @@ def run():
             break
         if userin.endswith("/"):
             linebreak()
-            with console.status(
-                "[bold green]Thinking...[/bold green]\n", spinner="dots"
-            ):
-                prompt = userin[:-1]
-                runQuery(prompt)
-                userin = ""
+            prompt = userin[:-1]
+            runQuery(prompt)
+            userin = ""
 
     if len(history) > 2:
         os.makedirs("logs", exist_ok=True)
