@@ -32,13 +32,14 @@ python main.py
 
 Type a prompt and press `/` + Enter to submit. Type `quit` or `exit` to end the session.
 
-```
-query> what is the meaning of life?/
-```
 
 ## Example interaction
 
 **Round 1**
+
+```
+query> what is the meaning of life?/
+```
 
 > **[Gemini]** As a software engineering CLI agent, my purpose is to assist with technical tasks. The question of the meaning of life falls outside my operational scope.
 
