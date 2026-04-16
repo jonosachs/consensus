@@ -112,8 +112,9 @@ def linebreak():
 def run():
     now = datetime.now().astimezone().isoformat()
     userin = ""
-    history.append({"Datetime": now})
-    history.append({"Instructions": instructions})
+    history.append("Group Chat")
+    history.append(f"Date: {now}")
+    history.append(f"Instructions: {instructions}")
 
     while True:
         userin += input("query>")
