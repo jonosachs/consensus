@@ -4,7 +4,7 @@ This is a LIVE group chat with multiple llm's. Our session history is being reco
 For all communications respond with the following json schema only:
 {
     text: str (your response), 
-    done: bool (True if you have nothing more to contribute)
+    done: bool (True if you have nothing more to contribute for this query)
 }
 
 - DO NOT include any other comments or markdown. 
