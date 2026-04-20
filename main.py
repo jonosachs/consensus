@@ -1,6 +1,6 @@
+from models import Message, Session
 from rich.console import Console
 from instructions import instructions
-from datetime import datetime
 from config import model_config
 from json import JSONDecodeError
 from prompt_toolkit import prompt
@@ -16,11 +16,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def log_session(history, time):
-    if len(history) > 3:
-        os.makedirs("logs", exist_ok=True)
-        with open(f"logs/session{time}.json", "w") as f:
-            json.dump(history, f, indent=4)
+def log_session(session: Session):
+    os.makedirs("logs", exist_ok=True)
+    with open(f"logs/session{session.get_date()}.json", "w") as f:
+        json.dump(session.to_dict(), f, indent=4)
 
 
 def cleanup():
@@ -39,102 +38,78 @@ def run_subprocess(args, timeout: int = 45) -> str:
     return response.stdout
 
 
-def callLlm(config: dict, user_prompt: str) -> dict:
-    model_name = config["name"]
+def callLlm(config: dict, user_prompt: str) -> str:
     model_args = config["args"] + [user_prompt]
 
     try:
         with console.status("[bold green]Thinking...[/bold green]\n", spinner="dots"):
             response = run_subprocess(model_args)
-
-        normal = normalise_resp(model_name, response)
-        assert isinstance(normal, dict)
-        return normal
+        return response
     except OSError as e:
         logger.error(f"Error: {e}")
-        return build_response(model_name, str(e))
+        return str(e)
     except subprocess.TimeoutExpired as e:
-        return build_response(model_name, "Timed out.")
+        return "Timed out."
     except subprocess.CalledProcessError as e:
-        return build_response(model_name, f"Command {e.cmd} failed")
+        return f"Command {e.cmd} failed"
 
 
-def update_history(history: list, model: str, response: dict):
-    text, done = deconstruct(response)
-    struct_entry = build_response(model, text, done)
-    history.append({"assistant": struct_entry})
-    return history
+def build_response(role: str, model: str, text: str, done: bool = True):
+    return Message(role, model, text, done)
 
 
-def build_response(model: str, text: str, done: bool = True):
-    return {"name": model, "text": text, "done": done}
+def normalise(model: str, response: str) -> Message:
+    response = response.strip()
+
+    # String with markdown (typically fenced code block)
+    if response.startswith("```json") and response.endswith("```"):
+        logger.info("Removing fencing and json tag from response")
+        response = response.removeprefix("```json").removesuffix("```").strip()
+
+    # Response includes text outside curly braces
+    lead_or_trail = not response.startswith("{") or not response.endswith("}")
+    has_curly = "{" in response and "}" in response
+    if lead_or_trail and has_curly:
+        logger.info("Text found outside curly braces")
+        start = response.find("{")
+        end = response.rfind("}") + 1
+        response = response[start:end].strip()
+
+    # Should now be JSON structured string
+    try:
+        r = json.loads(response)
+        text, done = r.values()
+        return build_response("assistant", model, text, done)
+    except JSONDecodeError as e:
+        # Otherwise likely plain text
+        logger.info("Plain text response detected")
+        return build_response("assistant", model, str(response), True)
 
 
-def normalise_resp(model: str, response: str | dict) -> dict:
-    if isinstance(response, str):
-        response = response.strip()
-
-        # String with markdown (typically fenced code block)
-        if response.startswith("```json") and response.endswith("```"):
-            logger.info("Removing fencing and json tag from response")
-            response = response.removeprefix("```json").removesuffix("```").strip()
-
-        # Response includes text outside curly braces
-        lead_or_trail = not response.startswith("{") or not response.endswith("}")
-        has_curly = "{" in response and "}" in response
-        if lead_or_trail and has_curly:
-            logger.info("Text found outside curly braces")
-            start = response.find("{")
-            end = response.rfind("}") + 1
-            response = response[start:end].strip()
-
-        # Should now be structured string
-        try:
-            return json.loads(response)
-        except JSONDecodeError as e:
-            # Otherwise likely plain text
-            logger.info("Plain text response detected")
-            return build_response(model, str(response))
-
-    # Attempt to find text if not in "text" field, fall back to raw response
-    if isinstance(response, dict):
-        text = (
-            response.get("text")
-            or response.get("message")
-            or response.get("result")
-            or response.get("content")
-            or str(response)
-        )
-        done = response.get("done", True)
-        return build_response(model, text, done)
-
-    # Unexpected format
-    logger.warning("Unexpected response format")
-    return build_response(model, str(response))
-
-
-def run_query(history, user_prompt):
-    history.append({"user": user_prompt.strip()})
-    finished = {}
-    for model in model_config:
-        finished[model] = False
+def collect_responses(session: Session):
+    participants = [model for model in model_config]
 
     for _ in range(5):
-        for model in model_config:
-            if not finished[model]:
-                response = callLlm(
-                    model_config[model], user_prompt=json.dumps(history, indent=4)
-                )
-                history = update_history(history, model, response)
+        for model in participants.copy():
+            response = callLlm(
+                model_config[model],
+                user_prompt=json.dumps(session.to_dict(), indent=4),
+            )
+            msg = normalise(model, response)
+            session.add_response(msg)
+            last = session.get_lastmsg()
 
-                last_msg = history[-1]["assistant"]
-                console.print(
-                    f"[bold green]\\[{model}][/bold green] {last_msg['text']}\n"
-                )
-                if last_msg["done"]:
-                    finished[model] = True
+            if last:
+                console.print(f"[bold green]\\[{model}][/bold green] {last.text}\n")
+                if last.done:
+                    participants.remove(model)
+            else:
+                logger.warning(f"None type response from {model}")
 
-    return history
+            if not participants:
+                break
+
+    return session
 
 
 def deconstruct(response: dict) -> tuple:
@@ -146,15 +121,6 @@ def deconstruct(response: dict) -> tuple:
 
 def linebreak():
     console.print("")
-
-
-def init_history(session_date):
-    history = []
-    history.append("Group Chat")
-    history.append(f"Date: {session_date}")
-    history.append(f"Instructions: {instructions}")
-    history.append("Chat transcript starts below:")
-    return history
 
 
 def handle_quit(userp):
@@ -183,27 +149,31 @@ def get_prompt():
             return user_prompt
 
 
-def run():
-    session_date = datetime.now().astimezone().isoformat()
-    history = init_history(session_date)
-
+def setup_crashlogging(session):
     # Log session on crash
     sys.excepthook = lambda typ, val, tb: (
-        log_session(history, session_date),
+        log_session(session),
         # Propagate crash details
         sys.__excepthook__(typ, val, tb),
     )
 
+
+def run():
+    session = Session()
+    setup_crashlogging(session)
+
     linebreak()
     while True:
-        userp = get_prompt()
-        if userp == "exit":
+        user_prmt = get_prompt()
+        if user_prmt == "exit":
             break
         linebreak()
-        history = run_query(history, userp)
+        session.add_prompt(user_prmt)
+        session = collect_responses(session)
 
-    if len(history) > 3:
-        log_session(history, session_date)
+    if session.length() > 3:
+        log_session(session)
 
 
-run()
+if __name__ == "__main__":
+    run()

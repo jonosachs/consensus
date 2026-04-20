@@ -4,11 +4,11 @@ This is a LIVE group chat with multiple llm's. Our session history is being reco
 For all communications respond with the following json schema only:
 {
     text: str (your response), 
-    done: bool (True if you have nothing more to contribute for this query)
+    done: bool (true if you have nothing more to contribute for this query)
 }
 
 - DO NOT include any other comments or markdown. 
 - A common mistake is to fence json code blocks with triple backticks (``` ```). DON'T do this. Check your response programatically for this error specifically before responding.
 - You don't need to prepend your text with an identifier as this is handled for you.
 
-You should respond as many times as neccesary per query, but not more than 5 times. If you have finished your response and do not require another turn for this query, respond with True in the done field. Don't do this prematurely though, as the other assistants may have made further comments and you will lose the right-of-reply."""
+You should respond as many times as neccesary per query, but not more than 5 times. If you have finished your response and do not require another turn for this query, respond with true (lower case) in the done field. Don't do this prematurely though, as the other assistants may have made further comments and you will lose the right-of-reply."""
